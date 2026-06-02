@@ -11,6 +11,8 @@ Terraform building block managing the AWS Organization and its OU tree.
 - [Outputs](#outputs)
 - [Resources](#resources)
 - [Usage](#usage)
+- [Importing existing resources](#importing-existing-resources)
+- [Gotchas](#gotchas)
 - [Contributing](#contributing)
 
 ## Requirements
@@ -186,14 +188,12 @@ Module was also published via Terraform Registry and can be used as a module fro
 
 ```hcl
 module "example" {
-  source  = "wanted-cloud/..."
-  version = "x.y.z"
+  source  = "wanted-cloud/organization/aws"
+  version = "~> 0.1"
 }
 ```
 
-### Basic usage example
-
-The minimal usage for the module is as follows:
+### Minimal — just the Org
 
 ```hcl
 terraform {
@@ -211,34 +211,23 @@ module "org" {
   source = "../.."
 }
 ```
-## Contributing
-
-_Contributions are welcomed and must follow [Code of Conduct](https://github.com/wanted-cloud/.github?tab=coc-ov-file) and common [Contributions guidelines](https://github.com/wanted-cloud/.github/blob/main/docs/CONTRIBUTING.md)._
-
-> If you'd like to report security issue please follow [security guidelines](https://github.com/wanted-cloud/.github?tab=security-ov-file).
----
-<sup><sub>_2025 &copy; All rights reserved - WANTED.solutions s.r.o._</sub></sup>
-<!-- END_TF_DOCS -->
-
-## Usage
-
-The module ships with two reference examples under `examples/`.
-
-### Minimal — just the Org
-
-```hcl
-module "org" {
-  source  = "wanted-cloud/organization/aws"
-  version = "~> 0.1"
-}
-```
 
 ### Enterprise — full OU tree
 
 ```hcl
+terraform {
+  required_version = ">= 1.9"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 module "org" {
-  source  = "wanted-cloud/organization/aws"
-  version = "~> 0.1"
+  source = "../.."
 
   organizational_units = {
     platform = {
@@ -281,9 +270,9 @@ module "org" {
   }
 }
 
-# Pass the OU id to downstream account modules
 output "workloads_prod_ou_id" {
-  value = module.org.organizational_units["workloads_prod"].id
+  description = "Identifier of the Workloads/Prod OU — pass to downstream account modules."
+  value       = module.org.organizational_units["workloads_prod"].id
 }
 ```
 
@@ -315,3 +304,12 @@ Read these before applying in any account that matters.
 | 6 | OU names must be unique within their parent (not globally). | The `organizational_units` validator groups entries by parent and rejects duplicate sibling names at plan time. |
 | 7 | Org destruction is blocked if the org contains any account other than the management account. | Expected behaviour — move member accounts out first (T1.02) before destroying. |
 | 8 | Service-linked role (SLR) creation can race on the first apply. | If apply fails because an SLR is still propagating, re-run after ~30 seconds (AWS-side eventual consistency). |
+
+## Contributing
+
+_Contributions are welcomed and must follow [Code of Conduct](https://github.com/wanted-cloud/.github?tab=coc-ov-file) and common [Contributions guidelines](https://github.com/wanted-cloud/.github/blob/main/docs/CONTRIBUTING.md)._
+
+> If you'd like to report security issue please follow [security guidelines](https://github.com/wanted-cloud/.github?tab=security-ov-file).
+---
+<sup><sub>_2025 &copy; All rights reserved - WANTED.solutions s.r.o._</sub></sup>
+<!-- END_TF_DOCS -->

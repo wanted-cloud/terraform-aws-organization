@@ -13,6 +13,8 @@ content: |-
   - [Outputs](#outputs)
   - [Resources](#resources)
   - [Usage](#usage)
+  - [Importing existing resources](#importing-existing-resources)
+  - [Gotchas](#gotchas)
   - [Contributing](#contributing)
 
   {{ .Requirements }}
@@ -26,25 +28,59 @@ content: |-
   {{ .Resources }}
 
   ## Usage
-  
+
   > For more detailed examples navigate to `examples` folder of this repository.
 
   Module was also published via Terraform Registry and can be used as a module from the registry.
 
   ```hcl
   module "example" {
-    source  = "wanted-cloud/..."
-    version = "x.y.z"
+    source  = "wanted-cloud/organization/aws"
+    version = "~> 0.1"
   }
   ```
 
-  ### Basic usage example
-
-  The minimal usage for the module is as follows:
+  ### Minimal — just the Org
 
   ```hcl
   {{ include "./examples/minimal/main.tf" }}
   ```
+
+  ### Enterprise — full OU tree
+
+  ```hcl
+  {{ include "./examples/enterprise/main.tf" }}
+  ```
+
+  ## Importing existing resources
+
+  When the management account already has an AWS Organization (brownfield), import the org and each pre-existing OU before the first `terraform apply`:
+
+  ```bash
+  terraform import module.org.aws_organizations_organization.this o-xxxxxxxxxx
+  ```
+
+  ```bash
+  terraform import 'module.org.aws_organizations_organizational_unit.this["platform"]' ou-rootid-platformid
+  ```
+
+  Repeat the second command for every OU declared in `var.organizational_units` that already exists in AWS, substituting the map key and the AWS OU id.
+
+  ## Gotchas
+
+  Read these before applying in any account that matters.
+
+  | # | Gotcha | Mitigation |
+  |---|---|---|
+  | 1 | `aws_organizations_organization` is a singleton per management account. | Import an existing org with `terraform import` instead of letting the module try to create a second one. |
+  | 2 | Feature-set downgrade (`ALL` → `CONSOLIDATED_BILLING`) requires destroy/recreate. | Pin `feature_set = "ALL"` for production orgs and add `lifecycle { prevent_destroy = true }` in the caller if desired. |
+  | 3 | Policy types must be enabled BEFORE policies of that type are attached. | Downstream policy modules (T1.03) consume the `enabled_policy_types` output — keep that contract in mind when reducing the list. |
+  | 4 | Removing an entry from `aws_service_access_principals` can break service-linked roles already in use. | Never remove a principal from an active org without confirming no service depends on it. |
+  | 5 | OU tree depth is capped at 5 levels (AWS hard limit). | The `organizational_units` validator rejects trees deeper than 5 levels at plan time. |
+  | 6 | OU names must be unique within their parent (not globally). | The `organizational_units` validator groups entries by parent and rejects duplicate sibling names at plan time. |
+  | 7 | Org destruction is blocked if the org contains any account other than the management account. | Expected behaviour — move member accounts out first (T1.02) before destroying. |
+  | 8 | Service-linked role (SLR) creation can race on the first apply. | If apply fails because an SLR is still propagating, re-run after ~30 seconds (AWS-side eventual consistency). |
+
   ## Contributing
 
   _Contributions are welcomed and must follow [Code of Conduct](https://github.com/wanted-cloud/.github?tab=coc-ov-file) and common [Contributions guidelines](https://github.com/wanted-cloud/.github/blob/main/docs/CONTRIBUTING.md)._
@@ -60,4 +96,3 @@ output:
     <!-- BEGIN_TF_DOCS -->
     {{ .Content }}
     <!-- END_TF_DOCS -->
-    
