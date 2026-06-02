@@ -8,3 +8,7 @@ terraform {
     }
   }
 }
+
+module "org" {
+  source = "../.."
+}

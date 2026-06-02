@@ -43,7 +43,7 @@ content: |-
   The minimal usage for the module is as follows:
 
   ```hcl
-  {{ include "./examples/base/main.tf" }}
+  {{ include "./examples/minimal/main.tf" }}
   ```
   ## Contributing
 
