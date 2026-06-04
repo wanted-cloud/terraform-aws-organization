@@ -14,6 +14,7 @@ content: |-
   - [Resources](#resources)
   - [Usage](#usage)
   - [Importing existing resources](#importing-existing-resources)
+  - [Migration](#migration)
   - [Gotchas](#gotchas)
   - [Contributing](#contributing)
 
@@ -46,25 +47,40 @@ content: |-
   {{ include "./examples/minimal/main.tf" }}
   ```
 
-  ### Enterprise — full OU tree
+  ### Composing with OUs and Policies
+
+  This module is **Organization root-only**. To manage OUs, compose it with the sibling [`terraform-aws-organization-unit`](https://github.com/wanted-cloud/terraform-aws-organization-unit) module. To manage policies, additionally compose with [`terraform-aws-organization-policy`](https://github.com/wanted-cloud/terraform-aws-organization-policy).
 
   ```hcl
-  {{ include "./examples/enterprise/main.tf" }}
+  module "org" {
+    source = "wanted-cloud/organization/aws"
+  }
+
+  module "ous" {
+    source = "wanted-cloud/organization-unit/aws"
+
+    root_id = module.org.root_id
+
+    organizational_units = {
+      platform  = { name = "Platform" }
+      workloads = { name = "Workloads" }
+    }
+  }
   ```
 
   ## Importing existing resources
 
-  When the management account already has an AWS Organization (brownfield), import the org and each pre-existing OU before the first `terraform apply`:
+  When the management account already has an AWS Organization (brownfield), import the org before the first `terraform apply`:
 
   ```bash
   terraform import module.org.aws_organizations_organization.this o-xxxxxxxxxx
   ```
 
-  ```bash
-  terraform import 'module.org.aws_organizations_organizational_unit.this["platform"]' ou-rootid-platformid
-  ```
+  OU imports are now the responsibility of the `terraform-aws-organization-unit` module — see its README for the matching `terraform import` commands.
 
-  Repeat the second command for every OU declared in `var.organizational_units` that already exists in AWS, substituting the map key and the AWS OU id.
+  ## Migration
+
+  If you are upgrading from a pre-split version of this module (where `organizational_units` was an input here), see [`MIGRATION.md`](./MIGRATION.md) for step-by-step `moved {}` block and `terraform state mv` instructions.
 
   ## Gotchas
 
@@ -76,10 +92,8 @@ content: |-
   | 2 | Feature-set downgrade (`ALL` → `CONSOLIDATED_BILLING`) requires destroy/recreate. | Pin `feature_set = "ALL"` for production orgs and add `lifecycle { prevent_destroy = true }` in the caller if desired. |
   | 3 | Policy types must be enabled BEFORE policies of that type are attached. | Downstream policy modules (T1.03) consume the `enabled_policy_types` output — keep that contract in mind when reducing the list. |
   | 4 | Removing an entry from `aws_service_access_principals` can break service-linked roles already in use. | Never remove a principal from an active org without confirming no service depends on it. |
-  | 5 | OU tree depth is capped at 5 levels (AWS hard limit). | The `organizational_units` validator rejects trees deeper than 5 levels at plan time. |
-  | 6 | OU names must be unique within their parent (not globally). | The `organizational_units` validator groups entries by parent and rejects duplicate sibling names at plan time. |
-  | 7 | Org destruction is blocked if the org contains any account other than the management account. | Expected behaviour — move member accounts out first (T1.02) before destroying. |
-  | 8 | Service-linked role (SLR) creation can race on the first apply. | If apply fails because an SLR is still propagating, re-run after ~30 seconds (AWS-side eventual consistency). |
+  | 5 | Org destruction is blocked if the org contains any account other than the management account. | Expected behaviour — move member accounts out first (T1.02) before destroying. |
+  | 6 | Service-linked role (SLR) creation can race on the first apply. | If apply fails because an SLR is still propagating, re-run after ~30 seconds (AWS-side eventual consistency). |
 
   ## Contributing
 

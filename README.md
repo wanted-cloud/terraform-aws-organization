@@ -1,7 +1,8 @@
 <!-- BEGIN_TF_DOCS -->
 # wanted-cloud/terraform-aws-organization
 
-Terraform building block managing the AWS Organization and its OU tree.
+Terraform building block managing the AWS Organization (root-only).
+The OU tree has moved to terraform-aws-organization-unit.
 
 ## Table of contents
 
@@ -12,6 +13,7 @@ Terraform building block managing the AWS Organization and its OU tree.
 - [Resources](#resources)
 - [Usage](#usage)
 - [Importing existing resources](#importing-existing-resources)
+- [Migration](#migration)
 - [Gotchas](#gotchas)
 - [Contributing](#contributing)
 
@@ -109,30 +111,6 @@ object({
 
 Default: `{}`
 
-### <a name="input_organizational_units"></a> [organizational\_units](#input\_organizational\_units)
-
-Description: OU tree defined as a flat map. Each entry's `parent` references another entry's KEY (not name) in this same map, or null for root-level OUs. OU depth is capped at 5 levels (AWS hard limit) and sibling OU names must be unique within their parent.
-
-Type:
-
-```hcl
-map(object({
-    name   = string
-    parent = optional(string, null)
-    tags   = optional(map(string), {})
-  }))
-```
-
-Default: `{}`
-
-### <a name="input_tags"></a> [tags](#input\_tags)
-
-Description: Tags applied to every OU created by this module. Merged with module-level tags from metadata and any per-OU tags.
-
-Type: `map(string)`
-
-Default: `{}`
-
 ## Outputs
 
 The following outputs are exported:
@@ -161,10 +139,6 @@ Description: Management account email.
 
 Description: Management account ID.
 
-### <a name="output_organizational_units"></a> [organizational\_units](#output\_organizational\_units)
-
-Description: Map of created OUs keyed by input key. Each entry exposes id, arn, name, and parent\_id.
-
 ### <a name="output_root_arn"></a> [root\_arn](#output\_root\_arn)
 
 Description: Root OU ARN.
@@ -178,7 +152,6 @@ Description: Root OU identifier — the implicit top-level OU under the org. Use
 The following resources are used by this module:
 
 - [aws_organizations_organization.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/organizations_organization) (resource)
-- [aws_organizations_organizational_unit.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/organizations_organizational_unit) (resource)
 
 ## Usage
 
@@ -212,83 +185,40 @@ module "org" {
 }
 ```
 
-### Enterprise — full OU tree
+### Composing with OUs and Policies
+
+This module is **Organization root-only**. To manage OUs, compose it with the sibling [`terraform-aws-organization-unit`](https://github.com/wanted-cloud/terraform-aws-organization-unit) module. To manage policies, additionally compose with [`terraform-aws-organization-policy`](https://github.com/wanted-cloud/terraform-aws-organization-policy).
 
 ```hcl
-terraform {
-  required_version = ">= 1.9"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
+module "org" {
+  source = "wanted-cloud/organization/aws"
 }
 
-module "org" {
-  source = "../.."
+module "ous" {
+  source = "wanted-cloud/organization-unit/aws"
+
+  root_id = module.org.root_id
 
   organizational_units = {
-    platform = {
-      name = "Platform"
-    }
-    platform_connectivity = {
-      name   = "Connectivity"
-      parent = "platform"
-    }
-    platform_management = {
-      name   = "Management"
-      parent = "platform"
-    }
-    platform_identity = {
-      name   = "Identity"
-      parent = "platform"
-    }
-    workloads = {
-      name = "Workloads"
-    }
-    workloads_dev = {
-      name   = "Dev"
-      parent = "workloads"
-    }
-    workloads_prod = {
-      name   = "Prod"
-      parent = "workloads"
-    }
-    sandbox = {
-      name = "Sandbox"
-    }
-    decommissioned = {
-      name = "Decommissioned"
-    }
+    platform  = { name = "Platform" }
+    workloads = { name = "Workloads" }
   }
-
-  tags = {
-    Owner       = "platform-team"
-    Environment = "production"
-  }
-}
-
-output "workloads_prod_ou_id" {
-  description = "Identifier of the Workloads/Prod OU — pass to downstream account modules."
-  value       = module.org.organizational_units["workloads_prod"].id
 }
 ```
 
 ## Importing existing resources
 
-When the management account already has an AWS Organization (brownfield), import the org and each pre-existing OU before the first `terraform apply`:
+When the management account already has an AWS Organization (brownfield), import the org before the first `terraform apply`:
 
 ```bash
 terraform import module.org.aws_organizations_organization.this o-xxxxxxxxxx
 ```
 
-```bash
-terraform import 'module.org.aws_organizations_organizational_unit.this["platform"]' ou-rootid-platformid
-```
+OU imports are now the responsibility of the `terraform-aws-organization-unit` module — see its README for the matching `terraform import` commands.
 
-Repeat the second command for every OU declared in `var.organizational_units` that already exists in AWS, substituting the map key and the AWS OU id.
+## Migration
+
+If you are upgrading from a pre-split version of this module (where `organizational_units` was an input here), see [`MIGRATION.md`](./MIGRATION.md) for step-by-step `moved {}` block and `terraform state mv` instructions.
 
 ## Gotchas
 
@@ -300,10 +230,8 @@ Read these before applying in any account that matters.
 | 2 | Feature-set downgrade (`ALL` → `CONSOLIDATED_BILLING`) requires destroy/recreate. | Pin `feature_set = "ALL"` for production orgs and add `lifecycle { prevent_destroy = true }` in the caller if desired. |
 | 3 | Policy types must be enabled BEFORE policies of that type are attached. | Downstream policy modules (T1.03) consume the `enabled_policy_types` output — keep that contract in mind when reducing the list. |
 | 4 | Removing an entry from `aws_service_access_principals` can break service-linked roles already in use. | Never remove a principal from an active org without confirming no service depends on it. |
-| 5 | OU tree depth is capped at 5 levels (AWS hard limit). | The `organizational_units` validator rejects trees deeper than 5 levels at plan time. |
-| 6 | OU names must be unique within their parent (not globally). | The `organizational_units` validator groups entries by parent and rejects duplicate sibling names at plan time. |
-| 7 | Org destruction is blocked if the org contains any account other than the management account. | Expected behaviour — move member accounts out first (T1.02) before destroying. |
-| 8 | Service-linked role (SLR) creation can race on the first apply. | If apply fails because an SLR is still propagating, re-run after ~30 seconds (AWS-side eventual consistency). |
+| 5 | Org destruction is blocked if the org contains any account other than the management account. | Expected behaviour — move member accounts out first (T1.02) before destroying. |
+| 6 | Service-linked role (SLR) creation can race on the first apply. | If apply fails because an SLR is still propagating, re-run after ~30 seconds (AWS-side eventual consistency). |
 
 ## Contributing
 
